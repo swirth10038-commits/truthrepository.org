@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuiTamDocs - Secure Document Repository</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+.no-download {
+-webkit-user-select: none;
+-moz-user-select: none;
+-ms-user-select: none;
+user-select: none;
+pointer-events: none;
+}
+.view-only img {
+pointer-events: none;
+-webkit-user-drag: none;
+-khtml-user-drag: none;
+-moz-user-drag: none;
+-o-user-drag: none;
+user-drag: none;
+}
+</style>
+</head>
+<body oncontextmenu="return false;">
+<div id="root"></div>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, getDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+const firebaseConfig = {
+apiKey: "AIzaSyBaxdsAhwQ5mcif094YOeqSPA-Z4AhpmIs",
+authDomain: "quitamdocs.firebaseapp.com",
+projectId: "quitamdocs",
+storageBucket: "quitamdocs.firebasestorage.app",
+messagingSenderId: "29390428668",
+appId: "1:29390428668:web:24f1afc0fb87fbe12a3a79"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const ADMIN_PASSWORD = 'Roscoe1960';
+
+let currentMode = 'public';
+let documents = [];
+let isAdmin = false;
+let viewingDoc = null;
+
+// Disable keyboard shortcuts for saving
+document.addEventListener('keydown', function(e) {
+if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'p')) {
+if (viewingDoc) {
+e.preventDefault();
+return false;
+}
+}
+});
+
+function showNotification(message, type = 'success') {
+const notif = document.createElement('div');
+notif.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 ${type === 'success' ? 'bg-green-500' : 'bg-red-500'} text-white`;
+notif.textContent = message;
+document.body.appendChild(notif);
+setTimeout(() => notif.remove(), 3000);
+}
+
+async function loadDocuments() {
+try {
+const querySnapshot = await getDocs(collection(db, 'documents'));
+documents = querySnapshot.docs.map(doc => ({
+id: doc.id,
+...doc.data()
+}));
+render();
+} catch (error) {
+showNotification('Error loading documents', 'error');
+}
+}
+
+async function handleUpload() {
+const name = document.getElementById('uploadName').value;
+const password = document.getElementById('uploadPassword').value;
+const fileInput = document.getElementById('uploadFile');
+const file = fileInput.files[0];
+
+if (!name || !password || !file) {
+showNotification('Please fill all fields', 'error');
+return;
+}
+
+const reader = new FileReader();
+reader.onload = async (e) => {
+try {
+const docData = {
+name: name,
+password: password,
+content: e.target.result,
+fileName: file.name,
+fileType: file.type,
+uploadDate: new Date().toISOString(),
+viewed: false,
+viewCount: 0
+};
+
+await addDoc(collection(db, 'documents'), docData);
+showNotification('Document uploaded successfully');
+document.getElementById('uploadName').value = '';
+document.getElementById('uploadPassword').value = '';
+fileInput.value = '';
+await loadDocuments();
+} catch (error) {
+showNotification('Upload failed', 'error');
+}
+};
+reader.readAsDataURL(file);
+}
+
+async function handleView() {
+const docId = document.getElementById('viewDocId').value;
+const password = document.getElementById('viewPassword').value;
+
+if (!docId || !password) {
+showNotification('Please enter document ID and password', 'error');
+return;
+}
+
+try {
+const docRef = doc(db, 'documents', docId);
+const docSnap = await getDoc(docRef);
+
+if (!docSnap.exists()) {
+showNotification('Document not found', 'error');
+return;
+}
+
+const docData = docSnap.data();
+
+if (docData.viewed) {
+showNotification('This document has already been viewed and is no longer available', 'error');
+return;
+}
+
+if (docData.password !== password) {
+showNotification('Incorrect password', 'error');
+return;
+}
+
+await updateDoc(docRef, {
+viewed: true,
+viewCount: (docData.viewCount || 0) + 1,
+viewedAt: new Date().toISOString()
+});
+
+viewingDoc = { id: docId, ...docData };
+showNotification('Document unlocked');
+render();
+} catch (error) {
+showNotification('Error viewing document', 'error');
+}
+}
+
+async function handleDelete(docId) {
+if (!confirm('Are you sure you want to delete this document?')) {
+return;
+}
+
+try {
+await deleteDoc(doc(db, 'documents', docId));
+showNotification('Document deleted');
+await loadDocuments();
+} catch (error) {
+showNotification('Delete failed', 'error');
+}
+}
+
+async function handleReload(docId) {
+if (!confirm('Reload this document to make it viewable again?')) {
+return;
+}
+
+try {
+const docRef = doc(db, 'documents', docId);
+await updateDoc(docRef, {
+viewed: false,
+viewedAt: null
+});
+showNotification('Document reloaded and is now available for viewing');
+await loadDocuments();
+} catch (error) {
+showNotification('Reload failed', 'error');
+}
+}
+
+function handleAdminLogin() {
+const password = document.getElementById('adminPassword').value;
+if (password === ADMIN_PASSWORD) {
+isAdmin = true;
+loadDocuments();
+showNotification('Admin access granted');
+} else {
+showNotification('Invalid password', 'error');
+}
+}
+
+function render() {
+const root = document.getElementById('root');
+root.innerHTML = `
+<div class="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+<div class="container mx-auto px-4 py-8">
+<div class="text-center mb-8">
+<div class="flex items-center justify-center gap-3 mb-4">
+<span class="text-4xl">🛡️</span>
+<h1 class="text-4xl font-bold text-white">Secure Document Repository</h1>
+</div>
+<p class="text-purple-300">Upload, store, and retrieve documents with password protection</p>
+</div>
+
+<div class="flex justify-center gap-4 mb-8">
+<button onclick="setMode('public')" class="px-6 py-3 rounded-lg font-semibold transition-all ${currentMode === 'public' ? 'bg-purple-600 text-white shadow-lg' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}">
+📄 Public View
+</button>
+<button onclick="setMode('upload')" class="px-6 py-3 rounded-lg font-semibold transition-all ${currentMode === 'upload' ? 'bg-purple-600 text-white shadow-lg' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}">
+⬆️ Upload
+</button>
+<button onclick="setMode('view')" class="px-6 py-3 rounded-lg font-semibold transition-all ${currentMode === 'view' ? 'bg-purple-600 text-white shadow-lg' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}">
+👁️ View Document
+</button>
+<button onclick="setMode('admin')" class="px-6 py-3 rounded-lg font-semibold transition-all ${currentMode === 'admin' ? 'bg-red-600 text-white shadow-lg' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}">
+🔒 Admin
+</button>
+</div>
+
+${renderMode()}
+</div>
+</div>
+`;
+}
+
+function renderMode() {
+if (currentMode === 'public') {
+return `
+<div class="bg-slate-800 rounded-lg shadow-2xl p-6 max-w-4xl mx-auto">
+<h2 class="text-2xl font-bold text-white mb-4">Available Documents</h2>
+${documents.length === 0 ? '<p class="text-slate-400">No documents available</p>' : `
+<div class="space-y-3">
+${documents.map(doc => `
+<div class="bg-slate-700 p-4 rounded-lg flex justify-between items-center">
+<div>
+<p class="text-white font-semibold">${doc.name}</p>
+<p class="text-slate-400 text-sm">ID: ${doc.id}</p>
+<p class="text-slate-400 text-sm">Uploaded: ${new Date(doc.uploadDate).toLocaleDateString()}</p>
+${doc.viewed ? '<p class="text-red-400 text-sm font-semibold">⚠️ Already Viewed</p>' : '<p class="text-green-400 text-sm">✓ Available</p>'}
+</div>
+<span class="text-2xl">${doc.viewed ? '🔴' : '🔒'}</span>
+</div>
+`).join('')}
+</div>
+`}
+</div>
+`;
+}
+
+if (currentMode === 'upload') {
+return `
+<div class="bg-slate-800 rounded-lg shadow-2xl p-6 max-w-2xl mx-auto">
+<h2 class="text-2xl font-bold text-white mb-4">Upload Document</h2>
+<div class="space-y-4">
+<div>
+<label class="block text-purple-300 mb-2">Document Name</label>
+<input type="text" id="uploadName" class="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none" placeholder="Enter document name">
+</div>
+<div>
+<label class="block text-purple-300 mb-2">Password</label>
+<input type="password" id="uploadPassword" class="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none" placeholder="Set a password">
+</div>
+<div>
+<label class="block text-purple-300 mb-2">Select File</label>
+<input type="file" id="uploadFile" class="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none">
+</div>
+<button onclick="handleUpload()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors">
+Upload Document
+</button>
+</div>
+</div>
+`;
+}
+
+if (currentMode === 'view') {
+if (viewingDoc) {
+return `
+<div class="bg-slate-800 rounded-lg shadow-2xl p-6 max-w-2xl mx-auto">
+<div class="flex justify-between items-center mb-4">
+<h3 class="text-xl font-bold text-white">${viewingDoc.name}</h3>
+<button onclick="closeDoc()" class="text-slate-400 hover:text-white text-2xl">✕</button>
+</div>
+<div class="bg-slate-700 p-4 rounded-lg">
+<p class="text-slate-300 mb-2">File: ${viewingDoc.fileName}</p>
+<p class="text-slate-300 mb-4">Uploaded: ${new Date(viewingDoc.uploadDate).toLocaleDateString()}</p>
+<div class="view-only">
+${viewingDoc.fileType.startsWith('image/') ? `
+<div style="position:relative; display:inline-block;">
+<img src="${viewingDoc.content}" alt="${viewingDoc.name}" class="max-w-full rounded no-download" ondragstart="return false;" oncontextmenu="return false;">
+<div style="position:absolute; top:0; left:0; right:0; bottom:0; background:transparent;"></div>
+</div>
+` : viewingDoc.fileType === 'application/pdf' ? `
+<embed src="${viewingDoc.content}#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf" class="w-full h-96 rounded no-download" />
+` : viewingDoc.fileType.startsWith('text/') ? `
+<div class="bg-slate-900 p-4 rounded text-slate-200 font-mono text-sm whitespace-pre-wrap max-h-96 overflow-y-auto no-download" oncontextmenu="return false;">
+${atob(viewingDoc.content.split(',')[1] || '')}
+</div>
+` : `
+<p class="text-yellow-300">This file type has been accessed.</p>
+`}
+</div>
+</div>
+</div>
+`;
+}
+
+return `
+<div class="bg-slate-800 rounded-lg shadow-2xl p-6 max-w-2xl mx-auto">
+<h2 class="text-2xl font-bold text-white mb-4">View Document</h2>
+<div class="space-y-4">
+<div>
+<label class="block text-purple-300 mb-2">Document ID</label>
+<input type="text" id="viewDocId" class="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none" placeholder="Enter document ID">
+</div>
+<div>
+<label class="block text-purple-300 mb-2">Password</label>
+<input type="password" id="viewPassword" class="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none" placeholder="Enter password">
+</div>
+<button onclick="handleView()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-lg transition-colors">
+View Document
+</button>
+</div>
+</div>
+`;
+}
+
+if (currentMode === 'admin') {
+if (!isAdmin) {
+return `
+<div class="bg-slate-800 rounded-lg shadow-2xl p-6 max-w-2xl mx-auto">
+<h2 class="text-2xl font-bold text-white mb-4">Admin Panel</h2>
+<div class="space-y-4">
+<div>
+<label class="block text-purple-300 mb-2">Admin Password</label>
+<input type="password" id="adminPassword" class="w-full p-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none" placeholder="Enter admin password">
+</div>
+<button onclick="handleAdminLogin()" class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-lg transition-colors">
+🔑 Login
+</button>
+</div>
+</div>
+`;
+}
+
+return `
+<div class="bg-slate-800 rounded-lg shadow-2xl p-6 max-w-4xl mx-auto">
+<div class="flex justify-between items-center mb-4">
+<h3 class="text-xl font-bold text-green-400">✓ Access Granted</h3>
+<button onclick="logout()" class="text-slate-400 hover:text-white">Logout</button>
+</div>
+${documents.length === 0 ? '<p class="text-slate-400">No documents to manage</p>' : `
+<div class="space-y-3">
+${documents.map(doc => `
+<div class="bg-slate-700 p-4 rounded-lg">
+<div class="flex justify-between items-start">
+<div class="flex-1">
+<p class="text-white font-semibold">${doc.name}</p>
+<p class="text-slate-400 text-sm">ID: ${doc.id}</p>
+<p class="text-slate-400 text-sm">Password: ${doc.password}</p>
+<p class="text-slate-400 text-sm">Status: ${doc.viewed ? '🔴 Viewed' : '🟢 Available'}</p>
+${doc.viewed ? `<p class="text-slate-400 text-sm">Viewed at: ${new Date(doc.viewedAt).toLocaleString()}</p>` : ''}
+</div>
+<div class="flex gap-2">
+${doc.viewed ? `<button onclick="handleReload('${doc.id}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg transition-colors text-sm">
+🔄 Reload
+</button>` : ''}
+<button onclick="handleDelete('${doc.id}')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg transition-colors">
+🗑️
+</button>
+</div>
+</div>
+</div>
+`).join('')}
+</div>
+`}
+</div>
+`;
+}
+}
+
+window.setMode = (mode) => {
+currentMode = mode;
+if (mode === 'public' || (mode === 'admin' && isAdmin)) {
+loadDocuments();
+} else {
+render();
+}
+};
+
+window.handleUpload = handleUpload;
+window.handleView = handleView;
+window.handleDelete = handleDelete;
+window.handleReload = handleReload;
+window.handleAdminLogin = handleAdminLogin;
+window.closeDoc = () => {
+viewingDoc = null;
+render();
+};
+window.logout = () => {
+isAdmin = false;
+render();
+};
+
+loadDocuments();
+</script>
+</body>
+</html>
